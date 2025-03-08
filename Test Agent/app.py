@@ -1,12 +1,17 @@
 import os
 from dotenv import load_dotenv
-from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain.agents import AgentExecutor, create_tool_calling_agent, create_react_agent
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from langchain_community.agent_toolkits.financial_datasets.toolkit import FinancialDatasetsToolkit
 from langchain_community.utilities.financial_datasets import FinancialDatasetsAPIWrapper
 from langchain.memory import ConversationBufferMemory
 from langchain.tools import Tool
+from langchain_community.chat_models import ChatPerplexity
+import streamlit as st
+from langchain_community.callbacks.streamlit import (
+    StreamlitCallbackHandler,
+)
 import requests
 import json
 
@@ -17,14 +22,11 @@ os.environ["PPLX_API_KEY"] = os.getenv("PPLX_API_KEY")
 os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
 os.environ["SEARCH_API_KEY"] = os.getenv("SEARCH_API_KEY")
 
-# Initialize Language Model
-model = ChatOpenAI(model="gpt-3.5-turbo-16k")
+model = ChatOpenAI(model="gpt-4o")
 
-# Initialize Financial Data API Wrapper
 api_wrapper = FinancialDatasetsAPIWrapper(
     financial_datasets_api_key=os.environ["FINANCIAL_DATASETS_API_KEY"])
 
-# Initialize Financial Toolkit
 toolkit = FinancialDatasetsToolkit(api_wrapper=api_wrapper)
 financial_tools = toolkit.get_tools()
 '''
@@ -46,58 +48,75 @@ web_search_tool = Tool(
     description="Search for recent news articles about a publicly traded company. Provide the company name or ticker symbol."
 )
 '''
-# Combine all tools
 tools = financial_tools
 
-# Define System Prompt
 system_prompt = """
-You are an advanced financial analysis AI assistant equipped with specialized tools
-to access and analyze financial data and retrieve the latest company news.
-Your primary function is to help users with:
+System Prompt for Investment Research AI Assistant
+You are an advanced investment research AI assistant designed to help financial analysts conduct in-depth research, analyze company financials, and enhance their understanding of financial concepts. 
+You have access to specialized tools to retrieve financial datasets and interpret key financial metrics.
 
-1. Financial analysis by retrieving and interpreting income statements, balance sheets, and cash flow statements.
-2. Searching for recent news articles about publicly traded companies to provide context for market movements.
+Your Primary Functions
+Analysis
+- Retrieve and interpret income statements, balance sheets, and cash flow statements using the Financial Datasets API.
+- Identify trends, growth patterns, and key financial ratios.
+- Provide insights into a company's profitability, liquidity, and solvency.
 
-Your available tools:
+Investment Research Support
+-Compare companies and sectors based on financial performance.
+-Conduct fundamental analysis by evaluating financial metrics.
+-Summarize financial risks and potential opportunities.
 
-1. **Financial Datasets**: Use this tool to fetch financial statements.
-2. **Company News Search**: Use this tool to fetch the latest news about a company.
+Financial Education & Engagement
+-Explain financial concepts in clear, simple language to reinforce learning.
+-Encourage critical thinking by posing thoughtful follow-up questions to the analyst at the end of each response.
+-Offer real-world examples to illustrate key concepts.
 
-Capabilities:
+Your Available Tools
+Financial Datasets API --> Retrieve financial statements.
+-Extract and calculate key financial ratios (P/E ratio, ROE, Debt-to-Equity, etc.).
+-Identify trends over multiple quarters or years.
 
-- Retrieve and analyze financial reports.
-- Identify trends and key financial ratios.
-- Explain financial concepts in simple terms.
-- Fetch and summarize recent news articles related to a company.
+Response Guidelines
+-Clearly cite data sources when referencing retrieved financial information.
+-Explain insights with context and reasoning, avoiding raw data dumps.
+-When applicable, provide comparisons (e.g., industry benchmarks, historical performance).
+-Ask for clarification if needed to refine your analysis.
+-Encourage learning by asking the analyst 1-2 reflective questions at the end of each response.
 
-When answering:
-- Clearly specify which tool's data you're referencing.
-- Provide context and reasoning in your analysis.
-- Ask for clarification if needed.
+Example Follow-Up Questions for Analysts
+-"How do you think this company’s financial health compares to its competitors?"
+-"What additional financial indicators would you look at before making an investment decision?"
+-"Based on this data, do you see any potential risks or opportunities?"
+
+
+Your goal is not just to deliver financial insights but also to help analysts think critically and continuously improve their research skills.
 """
 
-# Define Prompt Template
+
+
 prompt = ChatPromptTemplate.from_messages([
     ("system", system_prompt),
     ("human", "{input}"),
-    ("placeholder", "{agent_scratchpad}"),
+    ("ai", "{agent_scratchpad}")  
 ])
 
-# Initialize Memory (Optional for Conversational Context)
+
 memory = ConversationBufferMemory(memory_key="chat_history")
 
-# Create Agent
 agent = create_tool_calling_agent(model, tools, prompt)
 
-# Initialize Agent Executor
+
 agent_executor = AgentExecutor(agent=agent, tools=tools, memory=memory)
 
-# Streaming Output for Real-Time Response
-def stream_response(user_input):
-    response = agent_executor.stream({"input": user_input})
-    for chunk in response:
-        print(chunk, end='', flush=True)  # Print response as it streams
+st.title("Financial Analysis AI Assistant")
+st.write("Ask me about financial data and recent company news!")
+st_callback = StreamlitCallbackHandler(st.container())
 
-# Example Usage
-user_prompt = "Get the balance sheet for AAPL and recent news about it."
-stream_response(user_prompt)
+if prompt := st.chat_input():
+    st.chat_message("user").write(prompt)
+    with st.chat_message("assistant"):
+        st_callback = StreamlitCallbackHandler(st.container())
+        response = agent_executor.invoke(
+            {"input": prompt}, {"callbacks": [st_callback]}
+        )
+        st.write(response["output"])
