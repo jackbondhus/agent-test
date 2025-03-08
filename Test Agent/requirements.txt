@@ -6,3 +6,4 @@ dotenv
 requests
 openai
 jsonpi 
+streamlit
