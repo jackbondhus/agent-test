@@ -6,93 +6,111 @@ from langchain_openai import ChatOpenAI
 from langchain_community.agent_toolkits.financial_datasets.toolkit import FinancialDatasetsToolkit
 from langchain_community.utilities.financial_datasets import FinancialDatasetsAPIWrapper
 from langchain.memory import ConversationBufferMemory
-from langchain.tools import Tool
-from langchain_community.chat_models import ChatPerplexity
+from langchain.tools import BaseTool, StructuredTool, tool
+from langchain_community.tools import TavilySearchResults, DuckDuckGoSearchRun
 import streamlit as st
+import pandas as pd
 from langchain_community.callbacks.streamlit import (
     StreamlitCallbackHandler,
 )
 import requests
 import json
-
 load_dotenv()
 
-os.environ["FINANCIAL_DATASETS_API_KEY"] = os.getenv("FINANCIAL_DATASETS_API_KEY")
-os.environ["PPLX_API_KEY"] = os.getenv("PPLX_API_KEY")
 os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
-os.environ["SEARCH_API_KEY"] = os.getenv("SEARCH_API_KEY")
+os.environ["FINANCIAL_DATASETS_API_KEY"] = os.getenv("FINANCIAL_DATASETS_API_KEY")
+os.environ["TAVILY_API_KEY"] = os.getenv("TAVILY_API_KEY")
 
 model = ChatOpenAI(model="gpt-4o")
 
 api_wrapper = FinancialDatasetsAPIWrapper(
     financial_datasets_api_key=os.environ["FINANCIAL_DATASETS_API_KEY"])
 
-toolkit = FinancialDatasetsToolkit(api_wrapper=api_wrapper)
-financial_tools = toolkit.get_tools()
-'''
-# Define Web Search Tool
-def search_company_news(query: str):
-    """
-    Uses an external search API to fetch recent news articles about a company.
-    """
-    api_key = os.environ["SEARCH_API_KEY"]
-    search_url = f"https://api.example.com/search?q={query}&api_key={api_key}"
-    response = requests.get(search_url)
-    if response.status_code == 200:
-        return response.json()  # Adjust based on API response structure
-    return "Error fetching news."
-
-web_search_tool = Tool(
-    name="CompanyNewsSearch",
-    func=search_company_news,
-    description="Search for recent news articles about a publicly traded company. Provide the company name or ticker symbol."
+search = TavilySearchResults(
+    max_results=5,
+    search_depth="advanced",
+    include_answer=True,
+    include_raw_content=True,
+    include_images=True,
 )
-'''
-tools = financial_tools
+
+duckduckgo_search = DuckDuckGoSearchRun()
+
+@tool
+def fetch_google_sheet(sheet_id: str) -> str:
+    """Fetches portfolio data from a public Google Sheet given its sheet ID.
+    
+    The sheet must be shared with 'Anyone with the link' and should be in CSV-compatible format.
+    """
+    try:
+        # Convert Google Sheet ID to a public CSV URL
+        csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv"
+        
+        # Read the CSV data into a Pandas DataFrame
+        df = pd.read_csv(csv_url)
+
+        # Display the data for user interaction
+        import ace_tools as tools
+        tools.display_dataframe_to_user(name="Student Fund Portfolio", dataframe=df)
+
+        return "Portfolio data successfully fetched and displayed."
+
+    except Exception as e:
+        return f"Error fetching Google Sheet data: {str(e)}"
+
+
+toolkit = FinancialDatasetsToolkit(api_wrapper=api_wrapper)
+tools = toolkit.get_tools()
+tools.append(duckduckgo_search)
 
 system_prompt = """
-System Prompt for Investment Research AI Assistant
-You are an advanced investment research AI assistant designed to help financial analysts conduct in-depth research, analyze company financials, and enhance their understanding of financial concepts. 
-You have access to specialized tools to retrieve financial datasets and interpret key financial metrics.
 
-Your Primary Functions
-Analysis
-- Retrieve and interpret income statements, balance sheets, and cash flow statements using the Financial Datasets API.
-- Identify trends, growth patterns, and key financial ratios.
-- Provide insights into a company's profitability, liquidity, and solvency.
-
-Investment Research Support
--Compare companies and sectors based on financial performance.
--Conduct fundamental analysis by evaluating financial metrics.
--Summarize financial risks and potential opportunities.
-
-Financial Education & Engagement
--Explain financial concepts in clear, simple language to reinforce learning.
--Encourage critical thinking by posing thoughtful follow-up questions to the analyst at the end of each response.
--Offer real-world examples to illustrate key concepts.
-
-Your Available Tools
-Financial Datasets API --> Retrieve financial statements.
--Extract and calculate key financial ratios (P/E ratio, ROE, Debt-to-Equity, etc.).
--Identify trends over multiple quarters or years.
-
-Response Guidelines
--Clearly cite data sources when referencing retrieved financial information.
--Explain insights with context and reasoning, avoiding raw data dumps.
--When applicable, provide comparisons (e.g., industry benchmarks, historical performance).
--Ask for clarification if needed to refine your analysis.
--Encourage learning by asking the analyst 1-2 reflective questions at the end of each response.
-
-Example Follow-Up Questions for Analysts
--"How do you think this company’s financial health compares to its competitors?"
--"What additional financial indicators would you look at before making an investment decision?"
--"Based on this data, do you see any potential risks or opportunities?"
+You are a financial research assistant supporting a student-managed investment fund. Your primary role is to assist in equity research, macroeconomic analysis, risk assessment, and portfolio management insights by utilizing:
+Financial Datasets API for retrieving numerical financial data, metrics, and historical performance.
+Tavily Search API for fetching relevant news, market trends, and sentiment analysis from trusted sources.
+Your goal is to provide accurate, data-driven, and well-contextualized insights that align with the fund’s investment strategy.
 
 
-Your goal is not just to deliver financial insights but also to help analysts think critically and continuously improve their research skills.
+Investment Strategy Context
+The student fund primarily focuses on:
+Both growth and value stocks
+Operates in the 11 sectors of the S&P 500. Technology, Communications, Financials, Healthcare, Consumer Cyclical, Consumer Discretionary, Industrials, Consumer Staples, Energy, Real Estate, Materials and Utilities.
+
+
+You should prioritize quantitative financial data from the Financial Datasets API and qualitative market sentiment & news analysis from Tavily Search API to provide comprehensive investment insights.
+You should always reference the current portfolio positions and weightings when answering a question, by using the fetch_google_sheet tool to retrieve the latest portfolio data from a Google Sheet. 
+Use this sheet ID to access the sheet: 1ggTxK91PuQHxs35-GXWE_-2DzjOw5xfOXvh5_8ij8Lw
+
+Behavior & Response Guidelines
+Prioritize Structured Responses
+-Use clear, well-organized outputs with headers and bullet points.
+-Example: If retrieving financial metrics, present data in tables or concise summaries.
+
+Utilize APIs Based on Context
+-Use Financial Datasets API for numerical data (e.g., revenue growth, financial ratios, stock price trends).
+-Use Tavily Search API for qualitative insights (e.g., news sentiment, recent market events, analyst opinions).
+
+Apply Investment-Specific Thinking
+-Always compare financial metrics against industry benchmarks.
+-When pulling data, explain the relevance to investment decisions.
+-Identify trends, risks, and opportunities rather than just presenting raw numbers.
+
+Time Sensitivity & Freshness
+-When analyzing financial data, ensure it’s from the latest available period.
+-When retrieving news, prioritize the most recent and relevant articles.
+-If prompted for macroeconomic data, provide both historical trends and recent updates.
+
+Context Awareness
+-If analyzing a stock, recognize sector trends and competitor performance.
+-If discussing a portfolio, consider diversification and sector weighting.
+-If requested, suggest potential investment decisions based on the data.
+
+
+Maintain Reputable Source Integrity
+-For financial data, use reliable datasets from the Financial Datasets API.
+-For market news, ensure Tavily results are sourced from credible financial news platforms (e.g., Bloomberg, WSJ, Reuters, CNBC).
+-Avoid opinionated or speculative sources unless explicitly requested.
 """
-
-
 
 prompt = ChatPromptTemplate.from_messages([
     ("system", system_prompt),
@@ -100,23 +118,33 @@ prompt = ChatPromptTemplate.from_messages([
     ("ai", "{agent_scratchpad}")  
 ])
 
-
 memory = ConversationBufferMemory(memory_key="chat_history")
 
 agent = create_tool_calling_agent(model, tools, prompt)
 
-
 agent_executor = AgentExecutor(agent=agent, tools=tools, memory=memory)
 
+st.set_page_config(layout="wide")
 st.title("Financial Analysis AI Assistant")
-st.write("Ask me about financial data and recent company news!")
+st.write("Ask me about financial data and recent company news")
 st_callback = StreamlitCallbackHandler(st.container())
 
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
 if prompt := st.chat_input():
+    st.session_state.chat_history.append({"role": "user", "content": prompt})
     st.chat_message("user").write(prompt)
     with st.chat_message("assistant"):
         st_callback = StreamlitCallbackHandler(st.container())
         response = agent_executor.invoke(
             {"input": prompt}, {"callbacks": [st_callback]}
         )
+        st.session_state.chat_history.append({"role": "assistant", "content": response["output"]})
         st.write(response["output"])
+
+for message in st.session_state.chat_history:
+    if message["role"] == "user":
+        st.chat_message("user").write(message["content"])
+    else:
+        st.chat_message("assistant").write(message["content"])
