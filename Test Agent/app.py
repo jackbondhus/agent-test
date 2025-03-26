@@ -10,11 +10,10 @@ from langchain.tools import BaseTool, StructuredTool, tool
 from langchain_community.tools import TavilySearchResults, DuckDuckGoSearchRun
 import streamlit as st
 import pandas as pd
-from langchain_community.callbacks.streamlit import (
-    StreamlitCallbackHandler,
-)
+from langchain_community.callbacks.streamlit import (StreamlitCallbackHandler)
 import requests
 import json
+
 load_dotenv()
 
 os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
@@ -34,34 +33,41 @@ search = TavilySearchResults(
     include_images=True,
 )
 
-duckduckgo_search = DuckDuckGoSearchRun()
+from io import StringIO
 
 @tool
-def fetch_google_sheet(sheet_id: str) -> str:
-    """Fetches portfolio data from a public Google Sheet given its sheet ID.
-    
-    The sheet must be shared with 'Anyone with the link' and should be in CSV-compatible format.
+def get_portfolio_data() -> str:
+    """
+    Fetches portfolio data from a known public Google Sheet (CSV-compatible)
+    and returns the data as a CSV string.
+
+    The agent can parse this CSV to answer questions about the portfolio's 
+    holdings, weightings, etc.
     """
     try:
-        # Convert Google Sheet ID to a public CSV URL
+        # Hard-coded sheet ID (assuming it's always the same)
+        sheet_id = "1ggTxK91PuQHxs35-GXWE_-2DzjOw5xfOXvh5_8ij8Lw"
+
+        # Construct the CSV URL
         csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv"
-        
+
         # Read the CSV data into a Pandas DataFrame
         df = pd.read_csv(csv_url)
 
-        # Display the data for user interaction
-        import ace_tools as tools
-        tools.display_dataframe_to_user(name="Student Fund Portfolio", dataframe=df)
+        # Convert the DataFrame to a CSV string in memory
+        csv_buffer = StringIO()
+        df.to_csv(csv_buffer, index=False)
 
-        return "Portfolio data successfully fetched and displayed."
+        # Return the CSV string (this is what the agent sees)
+        return csv_buffer.getvalue()
 
     except Exception as e:
+        # Return an error message if something goes wrong
         return f"Error fetching Google Sheet data: {str(e)}"
 
 
 toolkit = FinancialDatasetsToolkit(api_wrapper=api_wrapper)
-tools = toolkit.get_tools()
-tools.append(duckduckgo_search)
+tools = toolkit.get_tools() + [get_portfolio_data]
 
 system_prompt = """
 
